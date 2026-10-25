@@ -1,0 +1,71 @@
+# Scratch only: can Eye's native core (Swift + LiteRT) be built for Windows and loaded from Bun?
+name: Eye Windows proto
+on: workflow_dispatch
+jobs:
+    build:
+        runs-on: windows-2025
+        steps:
+            - uses: actions/checkout@v7
+            - uses: actions/checkout@v7
+              with:
+                  repository: Desert-Ant-Labs/desert-ant-core
+                  ref: 86b9b55fe8c61ec1c27c5b6383f545c6df1d6ceb # v4.1.0
+                  path: dal
+                  persist-credentials: false
+            - uses: compnerd/gha-setup-swift@v0.4.0
+              with:
+                  branch: swift-6.2.1-release
+                  tag: 6.2.1-RELEASE
+            - uses: ilammy/msvc-dev-cmd@v1
+            - name: Vendor LiteRT
+              shell: pwsh
+              working-directory: dal
+              run: Tools/windows/vendor-litert.ps1
+            - name: Build EyeNode (static stdlib)
+              id: static
+              continue-on-error: true
+              shell: pwsh
+              working-directory: dal
+              run: |
+                  swift build --scratch-path ../b-static -c release --product EyeNode -Xswiftc -static-stdlib -Xlinker /LIBPATH:Vendor/litert/lib/windows-x64
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            - name: Build EyeNode (dynamic)
+              if: steps.static.outcome != 'success'
+              shell: pwsh
+              working-directory: dal
+              run: |
+                  swift build --scratch-path ../b-static -c release --product EyeNode -Xlinker /LIBPATH:Vendor/litert/lib/windows-x64
+                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            - name: Inspect
+              shell: pwsh
+              run: |
+                  Get-ChildItem -Recurse b-static -Filter EyeNode.dll | ForEach-Object { $_.FullName; $_.Length }
+                  $dll = (Get-ChildItem -Recurse b-static -Filter EyeNode.dll | Select-Object -First 1).FullName
+                  dumpbin /dependents $dll
+                  where.exe swiftCore.dll Foundation.dll FoundationEssentials.dll 2>$null
+                  New-Item -ItemType Directory -Force native | Out-Null
+                  Copy-Item $dll native/
+                  Copy-Item dal/Vendor/litert/lib/windows-x64/libLiteRt.dll native/
+                  # Ship whatever non-system DLLs the core imports from the Swift runtime.
+                  foreach ($dep in (dumpbin /dependents $dll | Select-String '^\s+(\S+\.dll)$' | ForEach-Object { $_.Matches[0].Groups[1].Value })) {
+                      $hit = where.exe $dep 2>$null | Select-Object -First 1
+                      if ($hit -and $hit -notmatch 'Windows\\System32' -and $hit -notmatch 'native\\') { Copy-Item $hit native/; "runtime: $hit" }
+                  }
+                  Get-ChildItem native
+            - uses: actions/upload-artifact@v7
+              with:
+                  name: eye-native-win32-x64
+                  path: native/
+            - uses: oven-sh/setup-bun@v2
+              with:
+                  bun-version: 1.4.4
+            - name: Load from Bun
+              shell: bash
+              run: |
+                  bun install --frozen-lockfile
+                  bun run vendor || true
+                  ls models
+                  mkdir -p node_modules/@desert-ant-labs/eye/native/win32-x64
+                  cp native/* node_modules/@desert-ant-labs/eye/native/win32-x64/
+                  export PATH="$PWD/node_modules/@desert-ant-labs/eye/native/win32-x64:$PATH"
+                  bun .github/proto/eye-test.ts "$PWD/models"

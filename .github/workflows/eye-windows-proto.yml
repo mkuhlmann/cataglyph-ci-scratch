@@ -33,7 +33,10 @@ jobs:
               shell: pwsh
               working-directory: dal
               run: |
-                  swift build --scratch-path ../b -c release --product EyeNode -Xlinker /LIBPATH:Vendor/litert/lib/windows-x64
+                  # The dal_* C ABI lives in modules linked statically into the DLL, and Windows
+                  # exports nothing from a static library unless told to.
+                  $exports = "eye_create dal_is_downloaded dal_download dal_run dal_destroy dal_flush_telemetry dal_buffer_free dal_call_group_end".Split(" ") | ForEach-Object { "-Xlinker", "/EXPORT:$_" }
+                  swift build --scratch-path ../b -c release --product EyeNode -Xlinker /LIBPATH:Vendor/litert/lib/windows-x64 @exports
                   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
             - name: Collect DLLs
               shell: pwsh
@@ -43,6 +46,10 @@ jobs:
                   New-Item -ItemType Directory -Force native | Out-Null
                   Copy-Item $dll native/
                   Copy-Item dal/Vendor/litert/lib/windows-x64/libLiteRt.dll native/
+                  # The MSVC C++ runtime, app-local from Visual Studio's redistributable folder.
+                  $crt = Get-ChildItem "$env:VCToolsRedistDir\x64" -Directory -Filter "Microsoft.VC*.CRT" | Select-Object -First 1
+                  "crt: $($crt.FullName)"
+                  Copy-Item "$($crt.FullName)\*.dll" native/
                   # Transitive closure of non-system imports, found on PATH (the Swift runtime).
                   $queue = [System.Collections.Queue]::new(); $queue.Enqueue("native/EyeNode.dll"); $queue.Enqueue("native/libLiteRt.dll")
                   $seen = @{}

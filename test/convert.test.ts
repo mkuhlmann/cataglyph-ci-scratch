@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import { DEFAULT_SETTINGS, ORIGINALS_DIR } from "../src/shared/types.ts";
 import type { ConvertSettings, MediaFile } from "../src/shared/types.ts";
@@ -23,12 +23,12 @@ const exists = (p: string) => stat(p).then(() => true, () => false);
 
 async function media(path: string): Promise<MediaFile> {
     const s = await stat(path);
-    const name = path.split("/").pop()!;
+    const name = basename(path);
     return { path, name, ext: name.split(".").pop()!.toLowerCase(), size: s.size, mtimeMs: s.mtimeMs };
 }
 
 async function job(path: string, extra: Partial<ConvertJob> = {}): Promise<ConvertJob> {
-    return { itemId: path.split("/").pop()!, still: await media(path), motion: null, embeddedMotion: false, hasGainMap: false, ...extra };
+    return { itemId: basename(path), still: await media(path), motion: null, embeddedMotion: false, hasGainMap: false, ...extra };
 }
 
 // A fresh directory per test, with a tagged JPEG fixture.
@@ -47,11 +47,12 @@ async function fixture(name: string, tagged = true): Promise<{ dir: string; jpg:
 }
 
 describe("outputPathFor", () => {
-    const still: MediaFile = { path: "/a/b/IMG_1.JPG", name: "IMG_1.JPG", ext: "jpg", size: 1, mtimeMs: 0 };
+    // join: the output sits next to the input with the platform's separator ("\\a\\b" on Windows).
+    const still: MediaFile = { path: join("/a", "b", "IMG_1.JPG"), name: "IMG_1.JPG", ext: "jpg", size: 1, mtimeMs: 0 };
     test("suffixes", () => {
-        expect(outputPathFor(still, settings())).toBe("/a/b/IMG_1_lossy_d1.0.jxl");
-        expect(outputPathFor(still, settings({ paramsInName: false }))).toBe("/a/b/IMG_1_lossy.jxl");
-        expect(outputPathFor(still, settings({ mode: "lossless" }))).toBe("/a/b/IMG_1_lossless.jxl");
+        expect(outputPathFor(still, settings())).toBe(join("/a", "b", "IMG_1_lossy_d1.0.jxl"));
+        expect(outputPathFor(still, settings({ paramsInName: false }))).toBe(join("/a", "b", "IMG_1_lossy.jxl"));
+        expect(outputPathFor(still, settings({ mode: "lossless" }))).toBe(join("/a", "b", "IMG_1_lossless.jxl"));
     });
 });
 

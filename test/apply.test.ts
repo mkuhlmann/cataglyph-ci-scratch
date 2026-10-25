@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { executeApply } from "../src/bun/apply/apply.ts";
 import { planApply, summarizePlan } from "../src/bun/apply/plan.ts";
 import { moveToTrash } from "../src/bun/apply/trash.ts";
@@ -56,7 +56,7 @@ describe("planApply", () => {
         item.motion = await file("A.MOV");
         item.primarySidecars = [await file("A.JPG.xmp")];
         const actions = planApply([item], { "A.JPG": dec("delete") }, { ...opts, folder: dir });
-        expect(actions.map((a) => a.from.split("/").pop())).toEqual(["A.JPG", "A.JPG.xmp", "A.ARW", "A.ARW.pp3", "A.MOV"]);
+        expect(actions.map((a) => basename(a.from))).toEqual(["A.JPG", "A.JPG.xmp", "A.ARW", "A.ARW.pp3", "A.MOV"]);
         expect(actions.every((a) => a.kind === "trash" && a.why === "deleted item")).toBe(true);
         const s = summarizePlan(actions);
         expect(s.trash).toBe(5);
@@ -70,9 +70,9 @@ describe("planApply", () => {
         item.rawSidecars = [await file("G.ARW.pp3", "pp")];
         item.originals = [await file("G.JPG")];
         const deleted = planApply([item], { [item.id]: dec("delete") }, { ...opts, folder: dir });
-        expect(deleted.map((a) => a.from.split("/").pop())).toEqual(["G_lossy_d1.0.jxl", "G.JPG", "G.ARW", "G.ARW.pp3"]);
+        expect(deleted.map((a) => basename(a.from))).toEqual(["G_lossy_d1.0.jxl", "G.JPG", "G.ARW", "G.ARW.pp3"]);
         const kept = planApply([item], { [item.id]: dec("keep", true) }, { ...opts, folder: dir });
-        expect(kept.map((a) => [a.kind, a.from.split("/").pop()])).toEqual([["move", "G.ARW"], ["move", "G.ARW.pp3"]]);
+        expect(kept.map((a) => [a.kind, basename(a.from)])).toEqual([["move", "G.ARW"], ["move", "G.ARW.pp3"]]);
     });
 
     test("keep + keepRaw moves raw and sidecar into RAW/", async () => {
@@ -87,7 +87,7 @@ describe("planApply", () => {
     test("keep without keepRaw trashes raw side only", async () => {
         const item = await photo("C.JPG");
         const actions = planApply([item], { "C.JPG": dec("keep") }, { ...opts, folder: dir });
-        expect(actions.map((a) => a.from.split("/").pop())).toEqual(["C.ARW", "C.ARW.pp3"]);
+        expect(actions.map((a) => basename(a.from))).toEqual(["C.ARW", "C.ARW.pp3"]);
         expect(actions.every((a) => a.why === "RAW not kept")).toBe(true);
     });
 
@@ -159,7 +159,9 @@ describe("executeApply", () => {
     });
 });
 
-describe("spec trash backend", () => {
+// The freedesktop trash (Path= is a URL-encoded absolute POSIX path); Windows trashes through
+// Electron's shell.trashItem and never uses this backend.
+describe.skipIf(process.platform === "win32")("spec trash backend", () => {
     test("writes files/ and info/*.trashinfo, unique names on collision", async () => {
         const a = await file("same name.jpg", "one");
         const results1 = await moveToTrash([a.path], { backend: "spec", trashDir });

@@ -13,6 +13,12 @@ type ViewMessages = CataglyphRPC["webview"]["messages"];
 const pending = new Map<number, { resolve: (value: any) => void; reject: (err: Error) => void }>();
 let seq = 0;
 let handlers: RequestHandlers | null = null;
+// The view asks for `init` as soon as it loads, and the main process relays it while app.ts is
+// still in its top-level awaits (settings, store, Eye client) before serve(). On Linux that
+// race was always won; the packaged Windows build lost it on every start (a slower process
+// start), and the view showed "unknown request init" over an empty window. Requests wait here.
+let served!: () => void;
+const ready = new Promise<void>(resolve => served = resolve);
 let shutdown: (() => Promise<void>) | null = null;
 let stopping = false;
 
@@ -22,6 +28,7 @@ function post(msg: WireMessage) {
 
 async function answer(id: number, method: string, params: unknown) {
     let outcome: Outcome;
+    await ready;
     try {
         const handler = handlers?.[method as keyof RequestHandlers] as ((p: unknown) => unknown) | undefined;
         if (!handler) throw new Error(`unknown request ${method}`);
@@ -68,6 +75,7 @@ process.on("disconnect", () => void stop());
 export function serve(requestHandlers: RequestHandlers, onShutdown: () => Promise<void>) {
     handlers = requestHandlers;
     shutdown = onShutdown;
+    served();
 }
 
 /** Pushes a message to the view. */

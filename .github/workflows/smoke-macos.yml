@@ -1,0 +1,33 @@
+# Scratch repo only: start the packaged macOS app from a Release run's artifact.
+name: Smoke macOS
+on:
+    workflow_dispatch:
+        inputs:
+            run_id:
+                description: "Release run id with the Cataglyph-macos artifact"
+                required: true
+permissions:
+    contents: read
+    actions: read
+jobs:
+    smoke:
+        runs-on: macos-15
+        steps:
+            - uses: actions/checkout@v7
+            - uses: oven-sh/setup-bun@v2
+              with:
+                  bun-version: 1.4.4
+            - run: bun install --frozen-lockfile
+            - uses: actions/download-artifact@v8
+              with:
+                  name: Cataglyph-macos
+                  run-id: ${{ inputs.run_id }}
+                  github-token: ${{ github.token }}
+                  path: dl
+            - run: ditto -x -k dl/*.zip app && xattr -cr app/Cataglyph.app && ls app
+            - run: bun .github/smoke/smoke-mac.ts "$PWD/app/Cataglyph.app"
+            - if: always()
+              uses: actions/upload-artifact@v7
+              with:
+                  name: smoke-screens
+                  path: "*.png"

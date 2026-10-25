@@ -118,9 +118,8 @@ jobs:
             - name: Checksums
               working-directory: artifacts
               run: |
-                  for f in *.AppImage *.zip *.dmg; do
-                      [ -e "$f" ] && shasum -a 256 "$f" > "$f.sha256"
-                  done
+                  shopt -s nullglob
+                  for f in *.AppImage *.zip *.dmg; do shasum -a 256 "$f" > "$f.sha256"; done
                   ls -l
 
             - name: Attach to release

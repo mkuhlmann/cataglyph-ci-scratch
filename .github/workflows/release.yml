@@ -84,14 +84,17 @@ jobs:
             # fetch-vendor.ts) is preinstalled on the runner image.
             - name: Install build tools
               if: runner.os == 'macOS'
-              # IO::Compress::Brotli builds with Alien::cmake3, which by default may try to
-              # build its own cmake from source; that failed intermittently (Alien-cmake3 FAIL,
-              # "Installing the dependencies failed"). The runner has cmake.
-              env:
-                  ALIEN_INSTALL_TYPE: system
+              # IO::Compress::Brotli builds through Alien::cmake3, which failed intermittently on
+              # the runner (once building, once configuring; the next run passed). Retried, with
+              # cpanm's build log printed so a failure that stays is readable.
               run: |
                   brew install cpanminus
-                  cpanm --notest IO::Compress::Brotli
+                  for attempt in 1 2 3; do
+                      cpanm --notest IO::Compress::Brotli && break
+                      tail -n 60 ~/.cpanm/build.log || true
+                      [ "$attempt" = 3 ] && exit 1
+                      sleep 15
+                  done
                   perl -MIO::Uncompress::Brotli -e 'print "perl Brotli ok\n"'
 
             # The same Bun as locally: the packaged app ships this binary as resources/app/bin/bun.
@@ -140,7 +143,9 @@ jobs:
               shell: bash
               run: |
                   shopt -s nullglob
-                  for f in *.AppImage *.zip *.dmg; do shasum -a 256 "$f" > "$f.sha256"; done
+                  # sha256sum on Linux and in Git Bash on Windows; macOS has only shasum. Same output.
+                  sum="sha256sum"; command -v sha256sum > /dev/null || sum="shasum -a 256"
+                  for f in *.AppImage *.zip *.dmg; do $sum "$f" > "$f.sha256"; done
                   ls -l
 
             - name: Attach to release

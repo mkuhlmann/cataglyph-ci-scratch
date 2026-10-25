@@ -3,12 +3,13 @@
 # Every push to main lets release-please update an open release PR: the next version (from the
 # commit types since the last release: fix -> patch, feat -> minor, while < 1.0 a breaking
 # change -> minor too) in package.json and .release-please-manifest.json, plus CHANGELOG.md.
-# Merging that PR tags vX.Y.Z and creates the GitHub release; the appimage job then builds
-# from that tag and attaches the AppImage and its checksum to the release.
+# Merging that PR tags vX.Y.Z and creates the GitHub release; the package jobs then build
+# from that tag and attach the Linux AppImage and the macOS (arm64, unsigned) zip + dmg, each
+# with its checksum, to the release.
 #
-# A manual run (workflow_dispatch) only builds and keeps the AppImage as a workflow artifact,
+# A manual run (workflow_dispatch) only builds and keeps the packages as workflow artifacts,
 # to check the build without releasing anything. Given a `tag`, it builds that tag instead and
-# attaches the AppImage to its existing release: v0.2.0 was released while the appimage job
+# attaches the packages to its existing release: v0.2.0 was released while the appimage job
 # failed, and release-please never reports the same release as created twice.
 
 name: Release
@@ -45,12 +46,23 @@ jobs:
                   config-file: release-please-config.json
                   manifest-file: .release-please-manifest.json
 
-    appimage:
+    package:
         needs: release-please
         # On a manual run release-please is skipped, which would skip this job too without
         # !cancelled().
         if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.release-please.outputs.release_created == 'true') }}
-        runs-on: ubuntu-24.04
+        strategy:
+            # A failing macOS build must not keep the AppImage off the release.
+            fail-fast: false
+            matrix:
+                include:
+                    - os: ubuntu-24.04
+                      target: linux
+                    # Apple silicon: Eye ships a native core for darwin-arm64 only.
+                    - os: macos-15
+                      target: macos
+        name: package (${{ matrix.target }})
+        runs-on: ${{ matrix.os }}
         env:
             TAG: ${{ needs.release-please.outputs.tag_name || inputs.tag }}
         steps:
@@ -63,7 +75,17 @@ jobs:
             # only with IO::Uncompress::Brotli. Without it the EXIF self-test failed every
             # runConvert test: exiftool reported the .jxl "unchanged" and Artist read back "".
             - name: Install build tools
+              if: runner.os == 'Linux'
               run: sudo apt-get update && sudo apt-get install -y --no-install-recommends squashfs-tools lzip libio-compress-brotli-perl
+
+            # The same Brotli module for the macOS perl. cmake (for building cjxl/djxl, see
+            # fetch-vendor.ts) is preinstalled on the runner image.
+            - name: Install build tools
+              if: runner.os == 'macOS'
+              run: |
+                  brew install cpanminus
+                  cpanm --notest IO::Compress::Brotli
+                  perl -MIO::Uncompress::Brotli -e 'print "perl Brotli ok\n"'
 
             # The same Bun as locally: the packaged app ships this binary as resources/app/bin/bun.
             - uses: oven-sh/setup-bun@v2
@@ -71,18 +93,21 @@ jobs:
                   bun-version: 1.4.4
 
             # cjxl/djxl, the LiteRT accelerator, the Eye weights and the AppImage runtime are pinned
-            # by checksum in fetch-vendor.ts, so the script's content is the cache key.
+            # by checksum in fetch-vendor.ts, so the script's content is the cache key. On macOS
+            # this also keeps the cjxl/djxl built from source (several minutes) between runs.
             - uses: actions/cache@v6
               with:
                   path: |
                       vendor
                       models
-                  key: vendor-${{ runner.os }}-${{ hashFiles('scripts/fetch-vendor.ts') }}
+                  key: vendor-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/fetch-vendor.ts') }}
 
             - uses: actions/cache@v6
               with:
-                  path: ~/.cache/electron
-                  key: electron-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+                  path: |
+                      ~/.cache/electron
+                      ~/Library/Caches/electron
+                  key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bun.lock') }}
 
             - run: bun install --frozen-lockfile
             - run: bun run vendor
@@ -90,21 +115,23 @@ jobs:
             - run: bun test
             - run: bun run package
 
-            - name: Checksum
+            - name: Checksums
               working-directory: artifacts
-              run: sha256sum *.AppImage > "$(ls *.AppImage).sha256"
+              run: |
+                  for f in *.AppImage *.zip *.dmg; do
+                      [ -e "$f" ] && shasum -a 256 "$f" > "$f.sha256"
+                  done
+                  ls -l
 
             - name: Attach to release
               if: env.TAG != ''
               env:
                   GH_TOKEN: ${{ github.token }}
-              run: gh release upload "$TAG" artifacts/*.AppImage artifacts/*.sha256 --clobber
+              run: gh release upload "$TAG" artifacts/* --clobber
 
             - name: Keep as workflow artifact
               if: env.TAG == ''
               uses: actions/upload-artifact@v7
               with:
-                  name: Cataglyph-AppImage
-                  path: |
-                      artifacts/*.AppImage
-                      artifacts/*.sha256
+                  name: Cataglyph-${{ matrix.target }}
+                  path: artifacts/*

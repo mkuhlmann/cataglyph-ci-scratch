@@ -103,7 +103,7 @@ async function stageApp() {
 
     const jxl = join(ROOT, "vendor", "jxl");
     const jxlHint = platform === "darwin"
-        ? "libjxl publishes no macOS binaries: build static cjxl/djxl from the v0.12.0 source (cmake -DBUILD_SHARED_LIBS=OFF -DJPEGXL_STATIC=ON; Homebrew's are linked against Homebrew's dylibs and won't run elsewhere) and place them, plus the LICENSE.* files, in vendor/jxl/"
+        ? "run `bun run vendor` (builds a static cjxl/djxl from source; needs cmake)"
         : "run `bun run vendor`";
     await need(join(jxl, "cjxl"), jxlHint);
     await need(join(jxl, "djxl"), jxlHint);

@@ -47,9 +47,10 @@ has used it on a real PC yet.
 
 ## Open
 
-a. **GPU:** `vendor/litert/libLiteRtWebGpuAccelerator.dll` (Dawn on D3D12) is shipped and put
-   on the GPU process's `PATH`, but the CI runner has no GPU: untested whether LiteRT picks
-   it up. The status line shows what LiteRT selected.
+a. **GPU:** `vendor/litert/libLiteRtWebGpuAccelerator.dll` (Dawn on D3D12) goes on the GPU
+   process's `PATH`, and LiteRT does select it: on the CI runner, which has no GPU, the
+   status line read "Microsoft Basic Render Driver, Direct3D" (Windows' software renderer).
+   Not seen on real hardware yet.
 b. **Signing:** the build is unsigned; SmartScreen warns on first start ("More info" >
    "Run anyway").
 c. **C++ runtime precedence:** Windows searches System32 before `PATH`, so an older

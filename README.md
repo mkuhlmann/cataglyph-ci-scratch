@@ -77,9 +77,15 @@ On macOS (Apple silicon) it writes `artifacts/Cataglyph-<version>-macos-arm64.zi
 (unsigned). `bun run vendor` builds cjxl/djxl from source there, which needs cmake. The build
 is tested in CI but hasn't been used on a real Mac yet; see [`docs/macos.md`](docs/macos.md).
 
+On Windows (x64) it writes `artifacts/Cataglyph-<version>-windows-x64.zip`, a portable,
+unsigned folder with `Cataglyph.exe`. Eye has no Windows build from Desert Ant Labs, so
+`bun run vendor` builds its native core from their source there (needs the Swift 6.2
+toolchain, Visual Studio's C++ tools and PowerShell 7). Also only tested in CI so far; see
+[`docs/windows.md`](docs/windows.md).
+
 Releases come from GitHub Actions: commits follow Conventional Commits, release-please keeps a
 release PR with the next version and changelog, and merging it publishes a GitHub release with
-the AppImage and the macOS zip + dmg attached, each with its SHA-256 checksum.
+the AppImage, the macOS zip + dmg and the Windows zip attached, each with its SHA-256 checksum.
 
 ## Data
 
@@ -89,7 +95,9 @@ the AppImage and the macOS zip + dmg attached, each with its SHA-256 checksum.
 - `~/.config/org.mkuhlmann.cataglyph/settings.json`: settings
 
 On macOS the cache is `~/Library/Caches/org.mkuhlmann.cataglyph/`, and state and settings are in
-`~/Library/Application Support/org.mkuhlmann.cataglyph/`.
+`~/Library/Application Support/org.mkuhlmann.cataglyph/`. On Windows the cache is
+`%LOCALAPPDATA%\org.mkuhlmann.cataglyph\Cache`, state and settings are in
+`%APPDATA%\org.mkuhlmann.cataglyph`.
 
 In the photo folder itself, the app only creates `RAW/` and `originals/`.
 

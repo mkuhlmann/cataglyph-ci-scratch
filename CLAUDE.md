@@ -2,8 +2,9 @@
 
 Desktop app (Electron 44, Vue 3.6 Vapor view, the Bun backend as a sidecar process) to cull a
 folder of new photos: gallery → Eye classification (on-device, GPU) → delete flagged items
-(trash) → archive keepers as JPEG XL. Personal tool for Linux/KDE; macOS (Apple silicon) is
-built and smoke-tested in CI only, not yet used on a real Mac (`docs/macos.md`).
+(trash) → archive keepers as JPEG XL. Personal tool for Linux/KDE; macOS (Apple silicon) and
+Windows (x64) are built and smoke-tested in CI only, not yet used on a real machine
+(`docs/macos.md`, `docs/windows.md`).
 
 ## Layout
 
@@ -22,7 +23,8 @@ built and smoke-tested in CI only, not yet used on a real Mac (`docs/macos.md`).
 - `scripts/build.ts` (→ `build/app`), `dev.ts`, `package.ts` (AppImage on Linux, zip/dmg on
   macOS), `fetch-vendor.ts` — downloads + checksum-verifies cjxl 0.12, the LiteRT WebGPU
   accelerator, the Eye weights and the AppImage runtime into `vendor/` and `models/` (on macOS
-  it builds a static cjxl/djxl from pinned libjxl sources instead; needs cmake).
+  it builds a static cjxl/djxl from pinned libjxl sources instead; needs cmake. On Windows it
+  builds Eye's native core `EyeNode.dll` from desert-ant-core's source; needs Swift 6.2).
 
 ## Architecture
 
@@ -50,8 +52,9 @@ on macOS. Hutch needs `~/.hutch/bin` on PATH.
 
 Releases are automated (`.github/workflows/release.yml`): release-please keeps a release PR
 open that bumps `package.json` and writes `CHANGELOG.md` from the commit types; merging it tags
-`vX.Y.Z`, and CI (a Linux and a `macos-15` job) attaches the AppImage and the unsigned arm64
-zip + dmg, each with a `.sha256`, to the GitHub release. Never bump the version
+`vX.Y.Z`, and CI (`ubuntu-24.04`, `macos-15`, `windows-2025` jobs) attaches the AppImage, the
+unsigned macOS arm64 zip + dmg and the unsigned Windows x64 zip, each with a `.sha256`, to the
+GitHub release. Never bump the version
 by hand. The workflow pins Bun 1.4.4 (it ships as `bin/bun`): keep it in step with local Bun.
 
 ## Conventions
@@ -93,13 +96,18 @@ by hand. The workflow pins Bun 1.4.4 (it ships as `bin/bun`): keep it in step wi
   `CATAGLYPH_DEV_SERVER` is set (`bun run dev:hmr`).
 - **Chromium's profile** lives in `<cache dir>/chromium` (`app.setPath("userData")`), not
   Electron's default `~/.config`.
-- **Which bun:** the packaged app ships its own at `resources/app/bin/bun`; dev runs use bun
-  from PATH (or `CATAGLYPH_BUN`). `tools.ts` and module resolution find `vendor/`, `models/` and
-  `node_modules` by walking up from `bun/index.js`.
+- **Which bun:** the packaged app ships its own at `resources/app/bin/bun` (`bun.exe` on
+  Windows); dev runs use bun from PATH (or `CATAGLYPH_BUN`). `tools.ts` and module resolution
+  find `vendor/`, `models/` and `node_modules` by walking up from `bun/index.js`.
 - **`electron` has no postinstall:** the binary downloads on the first `import electron`
   (`scripts/dev.ts` does that under bun).
 - **Killing a dev run:** `pkill -x electron`. Never `pkill -f` with a pattern that also appears
   in your own command line; it kills the shell.
+- **Eye on Windows is our own build** (`buildEyeWindows` in `fetch-vendor.ts`): Desert Ant
+  Labs ships no win32 native. It drops their ONNX Runtime edge and adds `/EXPORT`s for the
+  `dal_*` ABI; the Swift runtime DLLs ship beside it, and `eye-client.ts` puts that directory
+  on the Eye process's `PATH` (Windows' `LD_LIBRARY_PATH`). Bumping `@desert-ant-labs/eye`
+  means bumping `DAL_CORE` to the matching tag.
 - `.jxl` decoding in the view needs the `JXLImageFormat` feature, appended in
   `src/electron/main.ts`.
 - The AppImage (`scripts/package.ts`) is the stock Electron distribution renamed to `cataglyph`

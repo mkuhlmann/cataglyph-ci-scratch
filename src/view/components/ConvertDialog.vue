@@ -30,7 +30,7 @@ const example = computed(() => {
 });
 
 function base(path: string): string {
-    return path.split("/").pop() ?? path;
+    return path.split(/[\\/]/).pop() ?? path;
 }
 function saved(before: number, after: number): string {
     return before > 0 ? `${Math.round((1 - after / before) * 100)} %` : "–";

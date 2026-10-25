@@ -11,7 +11,7 @@ export interface TrashResult {
 
 export interface TrashOptions {
     /**
-     * "auto" picks the host (macOS), else gio, then kioclient, then the built-in spec
+     * "auto" picks the host (macOS, Windows), else gio, then kioclient, then the built-in spec
      * implementation.
      */
     backend?: "auto" | "host" | "gio" | "kioclient" | "spec";
@@ -29,7 +29,8 @@ let hostTrash: HostTrash | null = null;
  * Hands trashing to the Electron main process (shell.trashItem). On macOS that is the only
  * proper way in: the Finder's trash has no file layout to write into like the freedesktop
  * one, and NSFileManager's trashItemAtURL (what shell.trashItem calls) is what makes "Put
- * Back" work.
+ * Back" work. Windows likewise: shell.trashItem goes through IFileOperation into the Recycle
+ * Bin, whose per-volume $Recycle.Bin layout is not meant to be written by hand.
  */
 export function setHostTrash(fn: HostTrash) {
     hostTrash = fn;
@@ -37,7 +38,7 @@ export function setHostTrash(fn: HostTrash) {
 
 /**
  * Move files to the system trash so they can be restored: the freedesktop trash on Linux
- * (shows up in Dolphin's trash:/), the Finder's on macOS. Every path gets its own result:
+ * (shows up in Dolphin's trash:/), the Finder's on macOS, the Recycle Bin on Windows. Every path gets its own result:
  * one bad file must not hide the others.
  */
 export async function moveToTrash(paths: string[], opts: TrashOptions = {}): Promise<TrashResult[]> {

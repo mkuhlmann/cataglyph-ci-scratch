@@ -33,7 +33,7 @@ const store = new Store();
 const eye = new EyeClient();
 const media = new MediaServer(() => settings.transcodeVideos);
 
-if (process.platform === "darwin") setHostTrash(paths => host("trash", { paths }));
+if (process.platform !== "linux") setHostTrash(paths => host("trash", { paths }));
 
 const session = new Session(store, eye, media, {
     eye: info => send("eye", info),

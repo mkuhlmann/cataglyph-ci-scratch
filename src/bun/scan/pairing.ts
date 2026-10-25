@@ -60,9 +60,12 @@ function naturalCompare(a: string, b: string): number {
     return a.localeCompare(b, "en", { numeric: true, sensitivity: "base" }) || (a < b ? -1 : a > b ? 1 : 0);
 }
 
+// Item ids are paths relative to the folder. Windows paths (from the folder dialog and
+// path.join) use "\\", so either separator ends the folder prefix.
 function relativeTo(folder: string, path: string): string {
-    const base = folder.endsWith("/") ? folder : `${folder}/`;
-    return path.startsWith(base) ? path.slice(base.length) : path;
+    const base = folder.replace(/[\\/]$/, "");
+    const sep = path[base.length];
+    return path.startsWith(base) && (sep === "/" || sep === "\\") ? path.slice(base.length + 1) : path;
 }
 
 interface Group {

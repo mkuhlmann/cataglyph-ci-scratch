@@ -9,7 +9,7 @@ const emit = defineEmits<{ open: [dialog: "apply" | "convert" | "settings"] }>()
 
 const filters: Filter[] = ["all", "delete", "keep", "stacks", "hints", "raw", "video"];
 
-const name = computed(() => folder.value.split("/").pop());
+const name = computed(() => folder.value.split(/[\\/]/).pop());
 const running = computed(() => eye.value?.state === "running" || eye.value?.state === "starting");
 const pct = computed(() => (eye.value && eye.value.total ? (eye.value.done / eye.value.total) * 100 : 0));
 const accel = computed(() => {

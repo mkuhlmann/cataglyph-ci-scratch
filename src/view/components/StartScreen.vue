@@ -32,7 +32,7 @@ async function pick() {
                     class="ghost recent-item"
                     @click="openFolder(f)"
                 >
-                    <span class="name">{{ f.split("/").pop() }}</span>
+                    <span class="name">{{ f.split(/[\\/]/).pop() }}</span>
                     <span class="muted mono">{{ f }}</span>
                 </button>
             </div>

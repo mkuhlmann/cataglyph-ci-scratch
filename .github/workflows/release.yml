@@ -4,8 +4,8 @@
 # commit types since the last release: fix -> patch, feat -> minor, while < 1.0 a breaking
 # change -> minor too) in package.json and .release-please-manifest.json, plus CHANGELOG.md.
 # Merging that PR tags vX.Y.Z and creates the GitHub release; the package jobs then build
-# from that tag and attach the Linux AppImage and the macOS (arm64, unsigned) zip + dmg, each
-# with its checksum, to the release.
+# from that tag and attach the Linux AppImage, the macOS (arm64, unsigned) zip + dmg and the
+# Windows (x64, unsigned) zip, each with its checksum, to the release.
 #
 # A manual run (workflow_dispatch) only builds and keeps the packages as workflow artifacts,
 # to check the build without releasing anything. Given a `tag`, it builds that tag instead and
@@ -61,6 +61,8 @@ jobs:
                     # Apple silicon: Eye ships a native core for darwin-arm64 only.
                     - os: macos-15
                       target: macos
+                    - os: windows-2025
+                      target: windows
         name: package (${{ matrix.target }})
         runs-on: ${{ matrix.os }}
         env:
@@ -96,17 +98,30 @@ jobs:
             # by checksum in fetch-vendor.ts, so the script's content is the cache key. On macOS
             # this also keeps the cjxl/djxl built from source (several minutes) between runs.
             - uses: actions/cache@v6
+              id: vendor
               with:
                   path: |
                       vendor
                       models
                   key: vendor-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/fetch-vendor.ts') }}
 
+            # Windows builds Eye's native core from source (fetch-vendor.ts, buildEyeWindows), which
+            # needs the Swift toolchain the desert-ant-core CI builds it with, plus an MSVC
+            # environment for the C++ runtime it ships. Only when vendor/ isn't cached.
+            - uses: compnerd/gha-setup-swift@v0.4.0
+              if: runner.os == 'Windows' && steps.vendor.outputs.cache-hit != 'true'
+              with:
+                  branch: swift-6.2.1-release
+                  tag: 6.2.1-RELEASE
+            - uses: ilammy/msvc-dev-cmd@v1
+              if: runner.os == 'Windows' && steps.vendor.outputs.cache-hit != 'true'
+
             - uses: actions/cache@v6
               with:
                   path: |
                       ~/.cache/electron
                       ~/Library/Caches/electron
+                      ~/AppData/Local/electron/Cache
                   key: electron-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bun.lock') }}
 
             - run: bun install --frozen-lockfile
@@ -117,6 +132,7 @@ jobs:
 
             - name: Checksums
               working-directory: artifacts
+              shell: bash
               run: |
                   shopt -s nullglob
                   for f in *.AppImage *.zip *.dmg; do shasum -a 256 "$f" > "$f.sha256"; done
@@ -124,6 +140,7 @@ jobs:
 
             - name: Attach to release
               if: env.TAG != ''
+              shell: bash
               env:
                   GH_TOKEN: ${{ github.token }}
               run: gh release upload "$TAG" artifacts/* --clobber

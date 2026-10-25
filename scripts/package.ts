@@ -1,11 +1,11 @@
 // Packages the app for the host platform: `bun run scripts/package.ts` (`hutch run package`).
 //
-//   Linux   artifacts/Cataglyph-<version>-linux-x86_64.AppImage
-//   macOS   artifacts/Cataglyph-<version>-macos-arm64.zip (+ .dmg when hdiutil exists)
+//   Linux    artifacts/Cataglyph-<version>-linux-x86_64.AppImage
+//   macOS    artifacts/Cataglyph-<version>-macos-arm64.zip (+ .dmg when hdiutil exists)
+//   Windows  artifacts/Cataglyph-<version>-windows-x64.zip (portable, unsigned)
 //
 // Packaging always runs on the target OS: macOS needs codesign/hdiutil/ditto anyway, and the
-// native packages (Eye's LiteRT core, koffi) are pruned to the host's platform. Windows is out
-// of scope.
+// native packages (Eye's LiteRT core, koffi) are pruned to the host's platform.
 //
 // Both targets ship the same `resources/app/` tree. The Electron main process (a thin shell)
 // starts the Bun backend as a sidecar, `resources/app/bin/bun resources/app/bun/index.js`, and
@@ -16,15 +16,21 @@
 //                   find their .so/.dylib/.node files relative to their own package directory,
 //                   so they can't be bundled into index.js. Not asar'd either: Bun can't read
 //                   an asar and the native files must be real files.
-//   bin/bun         a copy of the Bun that runs this script, so the app needs no Bun on PATH
-//   vendor          cjxl, djxl (and the LiteRT GPU accelerator on Linux), with their licenses
+//   bin/bun(.exe)   a copy of the Bun that runs this script, so the app needs no Bun on PATH
+//   vendor          cjxl, djxl (and the LiteRT GPU accelerator on Linux and Windows), with their
+//                   licenses
+//
+// Windows also gets Eye's native core, which Desert Ant Labs doesn't publish for win32: the
+// EyeNode.dll that fetch-vendor.ts builds from their source (vendor/eye/win32-x64, with
+// libLiteRt.dll and the Swift and MSVC runtime DLLs) goes into Eye's native/win32-x64.
 //   models          the Eye weights and the Desert Ant Labs license they came with
 //   LICENSE, THIRD_PARTY_NOTICES.md
 //
-// Not bundled, expected on the host: perl (exiftool) and, optionally, ffmpeg.
+// Not bundled, expected on the host: perl (exiftool; on Windows exiftool-vendored ships an .exe
+// with its own Perl) and, optionally, ffmpeg.
 
 import { existsSync } from "node:fs";
-import { chmod, copyFile, cp, mkdir, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, copyFile, cp, mkdir, readdir, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { build } from "./build.ts";
@@ -37,12 +43,13 @@ const ARTIFACTS = join(ROOT, "artifacts");
 const platform = process.platform;
 const arch = process.arch;
 
-if (platform === "win32") {
-    throw new Error("Windows packaging is not supported: run this on Linux (AppImage) or macOS (zip/dmg)");
-}
-if (platform !== "linux" && platform !== "darwin") throw new Error(`unsupported platform ${platform}`);
+if (platform !== "linux" && platform !== "darwin" && platform !== "win32") throw new Error(`unsupported platform ${platform}`);
 if (platform === "linux" && arch !== "x64") throw new Error("the AppImage is only built for x86_64");
 if (platform === "darwin" && arch !== "arm64") throw new Error("the macOS build is only made for Apple silicon (arm64)");
+if (platform === "win32" && arch !== "x64") throw new Error("the Windows build is only made for x64");
+
+const windows = platform === "win32";
+const exe = (name: string) => windows ? `${name}.exe` : name;
 
 const pkg = await Bun.file(join(ROOT, "package.json")).json() as { version: string };
 
@@ -80,6 +87,11 @@ async function installDeps() {
     const modules = join(staging, "node_modules");
     for (const rel of PRUNE) await rm(join(modules, rel), { recursive: true, force: true });
     const eyeNative = join(modules, "@desert-ant-labs", "eye", "native");
+    if (windows) {
+        const built = join(ROOT, "vendor", "eye", EYE_NATIVE);
+        await need(join(built, "EyeNode.dll"), "run `bun run vendor` (builds Eye's native core; needs the Swift toolchain)");
+        await cp(built, join(eyeNative, EYE_NATIVE), { recursive: true });
+    }
     for (const dir of await readdir(eyeNative)) {
         if (dir !== EYE_NATIVE) await rm(join(eyeNative, dir), { recursive: true, force: true });
     }
@@ -98,25 +110,25 @@ async function stageApp() {
     await installDeps();
 
     await mkdir(join(STAGE, "bin"), { recursive: true });
-    await copyFile(process.execPath, join(STAGE, "bin", "bun"));
-    await chmod(join(STAGE, "bin", "bun"), 0o755);
+    await copyFile(process.execPath, join(STAGE, "bin", exe("bun")));
+    await chmod(join(STAGE, "bin", exe("bun")), 0o755);
 
     const jxl = join(ROOT, "vendor", "jxl");
     const jxlHint = platform === "darwin"
         ? "run `bun run vendor` (builds a static cjxl/djxl from source; needs cmake)"
         : "run `bun run vendor`";
-    await need(join(jxl, "cjxl"), jxlHint);
-    await need(join(jxl, "djxl"), jxlHint);
+    await need(join(jxl, exe("cjxl")), jxlHint);
+    await need(join(jxl, exe("djxl")), jxlHint);
     await mkdir(join(STAGE, "vendor", "jxl"), { recursive: true });
-    for (const bin of ["cjxl", "djxl"]) {
+    for (const bin of [exe("cjxl"), exe("djxl")]) {
         await copyFile(join(jxl, bin), join(STAGE, "vendor", "jxl", bin));
         await chmod(join(STAGE, "vendor", "jxl", bin), 0o755);
     }
     for (const name of await readdir(jxl)) {
         if (name.startsWith("LICENSE.")) await copyFile(join(jxl, name), join(STAGE, "vendor", "jxl", name));
     }
-    // The LiteRT WebGPU accelerator is a Linux .so; on macOS Eye falls back to what its own
-    // native core ships, so the directory is optional there.
+    // The LiteRT WebGPU accelerator (.so on Linux, .dll on Windows); on macOS Eye falls back to
+    // what its own native core ships, so the directory is optional there.
     const litert = join(ROOT, "vendor", "litert");
     if (existsSync(litert)) await cp(litert, join(STAGE, "vendor", "litert"), { recursive: true });
     else if (platform === "linux") throw new Error(`${litert} missing: run \`bun run vendor\``);
@@ -323,11 +335,87 @@ async function packageMac() {
     return outputs;
 }
 
+// ---------------------------------------------------------------------------------------------
+// Windows: folder via @electron/packager, then a portable zip
+// ---------------------------------------------------------------------------------------------
+
+// ICO is a little-endian ICONDIR (reserved 0, type 1, count), one 16-byte entry per image
+// (width and height as a byte, 0 meaning 256; planes 1; 32 bpp; size and offset of the data),
+// then the images. Windows Vista+ reads PNG data in an ICO, so no BMP encoding is needed.
+const ICO_SIZES = [16, 24, 32, 48, 64, 128, 256];
+
+async function writeIco(path: string) {
+    const source = join(ROOT, "assets", "cataglyph-1024.png");
+    const pngs: Uint8Array[] = [];
+    for (const size of ICO_SIZES) pngs.push(await new Bun.Image(source).resize(size, size).png().bytes());
+    const headerSize = 6 + 16 * pngs.length;
+    const file = new Uint8Array(headerSize + pngs.reduce((n, p) => n + p.length, 0));
+    const view = new DataView(file.buffer);
+    view.setUint16(2, 1, true);
+    view.setUint16(4, pngs.length, true);
+    let offset = headerSize;
+    pngs.forEach((png, i) => {
+        const size = ICO_SIZES[i] ?? 0;
+        const entry = 6 + 16 * i;
+        view.setUint8(entry, size >= 256 ? 0 : size);
+        view.setUint8(entry + 1, size >= 256 ? 0 : size);
+        view.setUint16(entry + 4, 1, true);
+        view.setUint16(entry + 6, 32, true);
+        view.setUint32(entry + 8, png.length, true);
+        view.setUint32(entry + 12, offset, true);
+        file.set(png, offset);
+        offset += png.length;
+    });
+    await Bun.write(path, file);
+}
+
+async function packageWindows() {
+    const { packager } = await import("@electron/packager");
+    const electronVersion = (await Bun.file(join(ROOT, "node_modules", "electron", "package.json")).json() as { version: string }).version;
+    const icon = join(WORK, "cataglyph");
+    await writeIco(`${icon}.ico`);
+
+    const outDir = join(ROOT, "build", "win");
+    await rm(outDir, { recursive: true, force: true });
+    const [appRoot] = await packager({
+        dir: STAGE,
+        out: outDir,
+        name: "Cataglyph",
+        // Cataglyph.exe; packager sets the icon and version resources with resedit (no wine).
+        executableName: "Cataglyph",
+        electronVersion,
+        platform: "win32",
+        arch: "x64",
+        // As on macOS: the Bun sidecar can't read an asar, and node_modules is pruned already.
+        asar: false,
+        prune: false,
+        overwrite: true,
+        icon,
+        win32metadata: {
+            CompanyName: "Manuel Kuhlmann",
+            FileDescription: "Cataglyph",
+            ProductName: "Cataglyph",
+        },
+    });
+    if (!appRoot) throw new Error("@electron/packager produced no output");
+
+    // A folder named after the app, so unpacking the zip gives "Cataglyph\Cataglyph.exe".
+    const folder = join(outDir, "Cataglyph");
+    await rename(appRoot, folder);
+    await mkdir(ARTIFACTS, { recursive: true });
+    const zip = join(ARTIFACTS, `Cataglyph-${pkg.version}-windows-x64.zip`);
+    await rm(zip, { force: true });
+    // Windows' bsdtar writes a zip when the name says so (-a); GNU tar from Git can't.
+    await run([join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe"), "-a", "-cf", zip, "-C", outDir, "Cataglyph"]);
+    console.log("Note: this build is unsigned. SmartScreen warns on first start (\"More info\" > \"Run anyway\").");
+    return [zip];
+}
+
 await build();
 await rm(WORK, { recursive: true, force: true });
 await mkdir(WORK, { recursive: true });
 await stageApp();
-const outputs = platform === "linux" ? await packageLinux() : await packageMac();
+const outputs = platform === "linux" ? await packageLinux() : platform === "darwin" ? await packageMac() : await packageWindows();
 await rm(WORK, { recursive: true, force: true });
 for (const out of outputs) {
     console.log(`✓ ${out} (${(Bun.file(out).size / 1024 / 1024).toFixed(0)} MB)`);

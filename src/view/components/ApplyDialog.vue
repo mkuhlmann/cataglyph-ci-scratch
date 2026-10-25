@@ -28,7 +28,7 @@ const WHY_KEYS: Record<string, MessageKey> = {
 const why = (raw: string) => (WHY_KEYS[raw] ? t(WHY_KEYS[raw]) : raw);
 
 function base(path: string): string {
-    return path.split("/").pop() ?? path;
+    return path.split(/[\\/]/).pop() ?? path;
 }
 
 let token = 0;

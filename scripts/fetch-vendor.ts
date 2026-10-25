@@ -26,7 +26,8 @@
 // weights), and build-appimage.ts ships them next to the binaries.
 
 import { createHash } from "node:crypto";
-import { chmod, copyFile, mkdir, mkdtemp, readdir, rm, stat } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { chmod, copyFile, cp, mkdir, mkdtemp, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -43,6 +44,48 @@ const LITERT_WHEEL = {
     member: "ai_edge_litert/libLiteRtWebGpuAccelerator.so",
     license: "ai_edge_litert-2.3.0.dist-info/licenses/LICENSE",
 };
+
+// Windows: the static x64 release (MSVC, no DLLs). Its licenses/ folder carries one file per
+// bundled library, LICENSE.libjxl among them.
+const LIBJXL_WINDOWS = {
+    url: "https://github.com/libjxl/libjxl/releases/download/v0.12.0/jxl-x64-windows-static.zip",
+    sha256: "3025d7e308390796d20492322e606bc92decaee7b6bc99d3f7547870ae5db7de",
+};
+
+// Windows: Eye's npm package ships native cores for linux-x64, linux-arm64 and darwin-arm64
+// only. Desert Ant Labs' Swift source does build for Windows (their CI does; their release
+// skips the npm native only because no package declares one), so buildEyeWindows builds
+// EyeNode.dll from the v4.1.0 tag against the LiteRT runtime in Google's win_amd64 wheel - the
+// same LiteRT path as Linux, the license allows building from source (section 2). Swift 6.2
+// has no static stdlib on Windows, so its runtime DLLs and the MSVC C++ runtime ship next to
+// the core.
+const DAL_CORE = {
+    url: "https://github.com/Desert-Ant-Labs/desert-ant-core/archive/86b9b55fe8c61ec1c27c5b6383f545c6df1d6ceb.tar.gz", // v4.1.0
+    sha256: "6143aaeea8dfa8801df0bf5e8a111eddb430515f6f3350460df27bc1b55a7c2e",
+};
+
+const LITERT_WHEEL_WINDOWS = {
+    url: "https://files.pythonhosted.org/packages/3e/f6/529d465a222282252226d272325d85bcbcf33e618eb3fc241d18f1a645a5/ai_edge_litert-2.3.0-cp312-cp312-win_amd64.whl",
+    sha256: "b33b039667da6c57815f88d4709c1b31890375fa2cd35f165a3bf9dfd36f23a3",
+};
+
+// The C ABI @desert-ant-labs/core binds with koffi (dalSymbols in core/src/native.js, plus
+// the call-group hook). Most of it is defined in modules linked statically into EyeNode.dll,
+// and a Windows DLL exports nothing of a static library unless the linker is told to: without
+// these the DLL loaded fine and koffi failed on "Cannot find function 'dal_is_downloaded'".
+const EYE_EXPORTS = [
+    "eye_create", "dal_is_downloaded", "dal_download", "dal_run", "dal_destroy",
+    "dal_flush_telemetry", "dal_buffer_free", "dal_call_group_end",
+];
+
+// Licenses of what ships next to EyeNode.dll: the Swift runtime (Apache 2.0 with the Runtime
+// Library Exception), Foundation's ICU build and ICU itself. libLiteRt.dll's comes from the
+// wheel, the MSVC runtime is redistributable under Visual Studio's terms.
+const SWIFT_LICENSES = [
+    ["LICENSE.swift", "https://raw.githubusercontent.com/swiftlang/swift/swift-6.2.1-RELEASE/LICENSE.txt", "770af8291f708538d8ff885a0bbc4e045cd700531741c4f99528d435c14d7f55"],
+    ["LICENSE.swift-foundation-icu", "https://raw.githubusercontent.com/swiftlang/swift-foundation-icu/swift-6.2.1-RELEASE/LICENSE.md", "2245a990b635558be210fb3eb4f8a6f7a49aebc0fefbf5859146a65ddc7ddcf3"],
+    ["LICENSE.icu", "https://raw.githubusercontent.com/unicode-org/icu/release-76-1/LICENSE", "01edac20612b1e590c1c1cfb02b7218c6adc7b0a944eda7a1e03aeee10725aed"],
+] as const;
 
 // macOS: libjxl publishes no macOS binaries, and Homebrew's cjxl is linked against Homebrew's
 // dylibs (/opt/homebrew/opt/...), so it won't run on a Mac without the same Homebrew. cjxl/djxl
@@ -223,6 +266,141 @@ async function buildCjxlMac(work: string) {
     console.log("✓ vendor/jxl/cjxl, djxl (libjxl 0.12.0, built from source)");
 }
 
+// Windows' own bsdtar unpacks zips; the GNU tar from Git for Windows, often first on PATH in
+// CI shells, does not.
+const WINDOWS_TAR = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe");
+
+async function fetchCjxlWindows(work: string) {
+    const out = join(ROOT, "vendor", "jxl");
+    if (await exists(join(out, "cjxl.exe"))) return console.log("✓ vendor/jxl/cjxl.exe present");
+    const archive = join(work, "jxl.zip");
+    await download(LIBJXL_WINDOWS.url, archive, LIBJXL_WINDOWS.sha256);
+    const unpack = join(work, "jxl");
+    await mkdir(unpack, { recursive: true });
+    await run([WINDOWS_TAR, "-xf", archive, "-C", unpack], work);
+    await mkdir(out, { recursive: true });
+    for (const name of ["cjxl.exe", "djxl.exe"]) {
+        const found = await findFile(unpack, name);
+        if (!found) throw new Error(`${name} not found in the libjxl release`);
+        await copyFile(found, join(out, name));
+    }
+    for (const entry of await readdir(unpack, { withFileTypes: true, recursive: true })) {
+        if (entry.isFile() && entry.name.startsWith("LICENSE.")) await copyFile(join(entry.parentPath, entry.name), join(out, entry.name));
+    }
+    console.log("✓ vendor/jxl/cjxl.exe, djxl.exe (libjxl 0.12.0)");
+}
+
+async function output(cmd: string[], cwd: string): Promise<string> {
+    const proc = Bun.spawn(cmd, { cwd, stdout: "pipe", stderr: "inherit" });
+    const text = await new Response(proc.stdout).text();
+    if (await proc.exited !== 0) throw new Error(`${cmd[0]} failed`);
+    return text;
+}
+
+// Where Windows' loader would find a DLL that is not next to the importer: on PATH, after
+// System32. Bun.which only looks for executables (PATHEXT), not DLLs.
+function onPath(name: string): string | null {
+    for (const dir of (process.env.PATH ?? "").split(";")) {
+        if (dir && existsSync(join(dir, name))) return join(dir, name);
+    }
+    return null;
+}
+
+async function buildEyeWindows(work: string) {
+    const out = join(ROOT, "vendor", "eye", "win32-x64");
+    const installed = join(ROOT, "node_modules", "@desert-ant-labs", "eye", "native", "win32-x64");
+    if (!await exists(join(out, "EyeNode.dll"))) {
+        for (const tool of ["swift", "llvm-readobj", "llvm-lib"]) {
+            if (!Bun.which(tool)) throw new Error(`building Eye's native core needs the Swift 6.2 toolchain on PATH (${tool} missing): https://www.swift.org/install/windows/`);
+        }
+        const redist = process.env.VCToolsRedistDir;
+        if (!redist) throw new Error("building Eye's native core needs an MSVC developer environment (VCToolsRedistDir): run from a \"x64 Native Tools\" prompt");
+
+        const src = join(work, "dal");
+        await download(DAL_CORE.url, join(work, "dal.tar.gz"), DAL_CORE.sha256);
+        await mkdir(src, { recursive: true });
+        await run([WINDOWS_TAR, "-xzf", join(work, "dal.tar.gz"), "-C", src, "--strip-components", "1"], work);
+
+        // The runtime and an import library for it (link.exe can't link a bare DLL), generated
+        // from its export table like the toolkit's own dal_windows_import_lib.
+        const wheel = join(work, "litert-win.whl");
+        await download(LITERT_WHEEL_WINDOWS.url, wheel, LITERT_WHEEL_WINDOWS.sha256);
+        const unpacked = join(work, "litert-win");
+        await mkdir(unpacked, { recursive: true });
+        await run([WINDOWS_TAR, "-xf", wheel, "-C", unpacked], work);
+        const litertLib = join(src, "Vendor", "litert", "lib", "windows-x64");
+        await mkdir(litertLib, { recursive: true });
+        await copyFile(join(unpacked, "ai_edge_litert", "libLiteRt.dll"), join(litertLib, "libLiteRt.dll"));
+        const exportTable = await output(["llvm-readobj", "--coff-exports", join(litertLib, "libLiteRt.dll")], work);
+        const names = [...exportTable.matchAll(/^\s+Name: (\S+)$/gm)].map(m => m[1]);
+        await Bun.write(join(work, "LiteRt.def"), ["LIBRARY libLiteRt.dll", "EXPORTS", ...names, ""].join("\r\n"));
+        await run(["llvm-lib", `/def:${join(work, "LiteRt.def")}`, "/machine:x64", `/out:${join(litertLib, "LiteRt.lib")}`, "/nologo"], work);
+
+        // Eye needs no ONNX Runtime: on Windows the Inference target links it for Voz only, and
+        // OnnxSession.swift is behind #if canImport(COnnxRuntime). Without the edge the build
+        // neither needs onnxruntime.lib nor makes EyeNode.dll import onnxruntime.dll.
+        const manifest = join(src, "Package.swift");
+        const swiftPackage = await Bun.file(manifest).text();
+        const edge = "] + jsWasi + jsEventLoop + onnxProducts";
+        if (!swiftPackage.includes(edge)) throw new Error("Package.swift no longer has the onnxProducts edge this build removes");
+        await Bun.write(manifest, swiftPackage.replace(edge, "] + jsWasi + jsEventLoop"));
+
+        const scratch = join(work, "swift-build");
+        await run([
+            "swift", "build", "--scratch-path", scratch, "-c", "release", "--product", "EyeNode",
+            "-Xlinker", `/LIBPATH:${litertLib}`,
+            ...EYE_EXPORTS.flatMap(name => ["-Xlinker", `/EXPORT:${name}`]),
+        ], src);
+        const dll = await findFile(scratch, "EyeNode.dll");
+        if (!dll) throw new Error("swift build produced no EyeNode.dll");
+
+        const stage = join(work, "eye-native");
+        await mkdir(stage, { recursive: true });
+        await copyFile(dll, join(stage, "EyeNode.dll"));
+        await copyFile(join(litertLib, "libLiteRt.dll"), join(stage, "libLiteRt.dll"));
+        const crt = (await readdir(join(redist, "x64"))).find(name => /^Microsoft\.VC\d+\.CRT$/.test(name));
+        if (!crt) throw new Error(`no Microsoft.VC*.CRT in ${join(redist, "x64")}`);
+        for (const name of await readdir(join(redist, "x64", crt))) {
+            if (name.endsWith(".dll")) await copyFile(join(redist, "x64", crt, name), join(stage, name));
+        }
+        // Everything the core needs that Windows doesn't have: the Swift runtime DLLs, found
+        // the way the loader would find them, transitively.
+        const systemRoot = (process.env.SystemRoot ?? "C:\\Windows").toLowerCase();
+        const queue = ["EyeNode.dll", "libLiteRt.dll"];
+        const seen = new Set<string>();
+        while (queue.length) {
+            const file = queue.shift()!;
+            const imports = await output(["llvm-readobj", "--coff-imports", join(stage, file)], work);
+            for (const [, dep] of imports.matchAll(/^\s+Name: (\S+\.dll)$/gim)) {
+                if (!dep || seen.has(dep.toLowerCase())) continue;
+                seen.add(dep.toLowerCase());
+                if (existsSync(join(stage, dep))) continue;
+                const found = onPath(dep);
+                if (!found || found.toLowerCase().startsWith(systemRoot) || dep.toLowerCase().startsWith("api-ms-win-")) continue;
+                await copyFile(found, join(stage, dep));
+                queue.push(dep);
+            }
+        }
+        for (const [name, url, digest] of SWIFT_LICENSES) await download(url, join(stage, name), digest);
+        await mkdir(join(ROOT, "vendor", "eye"), { recursive: true });
+        await cp(stage, out, { recursive: true });
+        console.log(`✓ vendor/eye/win32-x64 (EyeNode.dll built from desert-ant-core 4.1.0, ${(await readdir(out)).length} files)`);
+
+        // The GPU accelerator from the same wheel, where tools.ts looks for it.
+        const accel = join(ROOT, "vendor", "litert");
+        await mkdir(accel, { recursive: true });
+        await copyFile(join(unpacked, "ai_edge_litert", "libLiteRtWebGpuAccelerator.dll"), join(accel, "libLiteRtWebGpuAccelerator.dll"));
+        await copyFile(join(unpacked, "ai_edge_litert-2.3.0.dist-info", "licenses", "LICENSE"), join(accel, "LICENSE"));
+    } else {
+        console.log("✓ vendor/eye/win32-x64 present");
+    }
+    // Where @desert-ant-labs/eye/native looks (native/<platform>-<arch>), for dev runs and
+    // tests; package.ts copies it into the app's own install. A reinstall drops it, the next
+    // `bun run vendor` puts it back.
+    await rm(installed, { recursive: true, force: true });
+    await cp(out, installed, { recursive: true });
+}
+
 async function fetchAccelerator(work: string) {
     const out = join(ROOT, "vendor", "litert");
     if (await exists(join(out, "LICENSE"))) {
@@ -269,6 +447,10 @@ try {
     await fetchModel();
     if (process.platform === "linux") await fetchAppImageRuntime();
     if (process.platform === "darwin") await buildCjxlMac(work);
+    if (process.platform === "win32") {
+        await fetchCjxlWindows(work);
+        await buildEyeWindows(work);
+    }
 } finally {
     await rm(work, { recursive: true, force: true });
 }

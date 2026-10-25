@@ -6,6 +6,13 @@
 // load the model or dies, the client respawns without the accelerator on the library path,
 // which leaves LiteRT on its XNNPACK CPU backend - slower (~280 vs ~115 ms per photo on a
 // Radeon 890M) but always available.
+//
+// Windows has no LD_LIBRARY_PATH: LoadLibrary looks for a DLL's dependencies on PATH, not
+// next to the DLL koffi loaded by full path. Eye's native core there is our own build
+// (EyeNode.dll, see scripts/fetch-vendor.ts) next to libLiteRt.dll and the Swift runtime DLLs,
+// so that directory goes on PATH for every Eye process, and the accelerator's for the GPU one.
+
+import { delimiter } from "node:path";
 
 import type { Subprocess } from "bun";
 
@@ -51,8 +58,14 @@ export class EyeClient {
 
     private spawn(gpu: boolean, modelDir: string, acceleratorDir: string | null): Promise<EyeStatus> {
         const env: Record<string, string | undefined> = { ...process.env, CATAGLYPH_ROLE: "eye" };
+        const prepend = (name: string, dir: string) => {
+            env[name] = env[name] ? `${dir}${delimiter}${env[name]}` : dir;
+        };
+        const windows = process.platform === "win32";
+        const eyeNative = toolPaths().eyeNativeDir;
+        if (windows && eyeNative) prepend(pathVar(env), eyeNative);
         if (gpu && acceleratorDir) {
-            env.LD_LIBRARY_PATH = env.LD_LIBRARY_PATH ? `${acceleratorDir}:${env.LD_LIBRARY_PATH}` : acceleratorDir;
+            prepend(windows ? pathVar(env) : "LD_LIBRARY_PATH", acceleratorDir);
             env.CATAGLYPH_EYE_GPU = "1";
         } else {
             env.CATAGLYPH_EYE_GPU = "0";
@@ -170,4 +183,11 @@ export class EyeClient {
         proc.kill();
         this.proc = null;
     }
+}
+
+// Windows environment names are case-insensitive, and the inherited one is usually "Path".
+// Spread into a plain object it stays "Path", and a new "PATH" next to it would be a second
+// variable the child resolves unpredictably.
+function pathVar(env: Record<string, string | undefined>): string {
+    return Object.keys(env).find(key => key.toUpperCase() === "PATH") ?? "PATH";
 }

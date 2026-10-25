@@ -27,9 +27,9 @@ export { CACHE_DIR, CONFIG_DIR, DATA_DIR };
 //
 // The cache is the exception: the Electrobun builds' CEF created CACHE_DIR before this ran,
 // so its entries move one by one. That is only cache, and whatever fails to move is rebuilt.
-// Those builds were Linux-only, so there is nothing to adopt on macOS.
+// Those builds were Linux-only, so there is nothing to adopt on macOS or Windows.
 function adoptLegacyDirs() {
-    if (process.platform === "darwin") return;
+    if (process.platform !== "linux") return;
     for (const [root, target] of [[XDG_DATA, DATA_DIR], [XDG_CONFIG, CONFIG_DIR]] as const) {
         const legacy = join(root, "cataglyph");
         if (!existsSync(legacy) || existsSync(target)) continue;

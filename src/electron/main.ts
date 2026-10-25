@@ -45,7 +45,7 @@ function sidecarEnv(): NodeJS.ProcessEnv {
 
 // A packaged app ships its own bun (scripts/package.ts); a dev run uses the one on PATH.
 function bunExecutable(): string {
-    const bundled = join(APP_ROOT, "bin", "bun");
+    const bundled = join(APP_ROOT, "bin", process.platform === "win32" ? "bun.exe" : "bun");
     if (existsSync(bundled)) return bundled;
     return process.env.CATAGLYPH_BUN || "bun";
 }
@@ -127,7 +127,8 @@ async function createWindow() {
         // style.css --bg: no white flash before the view has painted.
         backgroundColor: "#121316",
         show: false,
-        icon: process.platform === "linux" ? join(APP_ROOT, "icon.png") : undefined,
+        // macOS takes the bundle's icon; Windows the .exe's, which only the packaged build has.
+        icon: process.platform === "darwin" ? undefined : join(APP_ROOT, "icon.png"),
         webPreferences: {
             preload: join(APP_ROOT, "electron", "preload.cjs"),
             contextIsolation: true,

@@ -39,10 +39,15 @@ export interface ToolPaths {
     cjxl: string;
     /** Vendored djxl from the same release: Bun.Image can't read JPEG XL. */
     djxl: string;
-    /** The Perl exiftool that exiftool-vendored ships; needs only the system perl. */
+    /**
+     * The Perl exiftool that exiftool-vendored ships; needs only the system perl. On Windows,
+     * which has no perl, its exiftool.exe package (a bundled portable Perl) instead.
+     */
     exiftool: string;
-    /** Directory holding libLiteRtWebGpuAccelerator.so, or null (CPU only). */
+    /** Directory holding the LiteRT GPU accelerator (.so/.dll), or null (CPU only). */
     litertAcceleratorDir: string | null;
+    /** Windows: Eye's native core directory (EyeNode.dll and the DLLs it needs), else null. */
+    eyeNativeDir: string | null;
     /** Directory holding eye.tflite + eye_meta.json. */
     modelDir: string | null;
     /** ffmpeg for video poster frames; system binary, optional. */
@@ -51,15 +56,19 @@ export interface ToolPaths {
 
 let cached: ToolPaths | null = null;
 
+const windows = process.platform === "win32";
+const exe = (name: string) => windows ? `${name}.exe` : name;
+
 export function toolPaths(): ToolPaths {
     if (cached) return cached;
-    const accel = findResource("vendor/litert/libLiteRtWebGpuAccelerator.so");
+    const accel = findResource(`vendor/litert/libLiteRtWebGpuAccelerator.${windows ? "dll" : "so"}`);
     const model = findResource("models/eye.tflite");
     cached = {
-        cjxl: findResource("vendor/jxl/cjxl") ?? "cjxl",
-        djxl: findResource("vendor/jxl/djxl") ?? "djxl",
-        exiftool: findResource("node_modules/exiftool-vendored.pl/bin/exiftool") ?? "exiftool",
+        cjxl: findResource(`vendor/jxl/${exe("cjxl")}`) ?? exe("cjxl"),
+        djxl: findResource(`vendor/jxl/${exe("djxl")}`) ?? exe("djxl"),
+        exiftool: findResource(windows ? "node_modules/exiftool-vendored.exe/bin/exiftool.exe" : "node_modules/exiftool-vendored.pl/bin/exiftool") ?? exe("exiftool"),
         litertAcceleratorDir: accel ? dirname(accel) : null,
+        eyeNativeDir: windows ? findResource("node_modules/@desert-ant-labs/eye/native/win32-x64") : null,
         modelDir: model ? dirname(model) : null,
         ffmpeg: Bun.which("ffmpeg"),
     };

@@ -276,8 +276,11 @@ async function fetchCjxlWindows(work: string) {
     const archive = join(work, "jxl.zip");
     await download(LIBJXL_WINDOWS.url, archive, LIBJXL_WINDOWS.sha256);
     const unpack = join(work, "jxl");
-    await mkdir(unpack, { recursive: true });
-    await run([WINDOWS_TAR, "-xf", archive, "-C", unpack], work);
+    // The release zip uses Deflate64, which bsdtar can't read ("Unsupported ZIP compression
+    // method (9: deflation-64-bit)"); .NET's ZipArchive in PowerShell 7 can.
+    const pwsh = Bun.which("pwsh");
+    if (!pwsh) throw new Error("unpacking the libjxl Windows release needs PowerShell 7 (pwsh): winget install Microsoft.PowerShell");
+    await run([pwsh, "-NoProfile", "-Command", `Expand-Archive -LiteralPath '${archive}' -DestinationPath '${unpack}' -Force`], work);
     await mkdir(out, { recursive: true });
     for (const name of ["cjxl.exe", "djxl.exe"]) {
         const found = await findFile(unpack, name);

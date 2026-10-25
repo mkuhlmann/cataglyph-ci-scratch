@@ -84,6 +84,11 @@ jobs:
             # fetch-vendor.ts) is preinstalled on the runner image.
             - name: Install build tools
               if: runner.os == 'macOS'
+              # IO::Compress::Brotli builds with Alien::cmake3, which by default may try to
+              # build its own cmake from source; that failed intermittently (Alien-cmake3 FAIL,
+              # "Installing the dependencies failed"). The runner has cmake.
+              env:
+                  ALIEN_INSTALL_TYPE: system
               run: |
                   brew install cpanminus
                   cpanm --notest IO::Compress::Brotli

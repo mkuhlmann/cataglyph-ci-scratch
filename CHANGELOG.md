@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/mkuhlmann/cataglyph-ci-scratch/compare/v0.3.0...v0.4.0) (2026-10-25)
+
+
+### Features
+
+* **settings:** add cache tab to inspect and clear the cache ([039deaf](https://github.com/mkuhlmann/cataglyph-ci-scratch/commit/039deaf08761cf41c4195200ee5e66f54b76b746))
+
 ## [0.3.0](https://github.com/mkuhlmann/cataglyph/compare/v0.2.0...v0.3.0) (2026-10-25)
 
 

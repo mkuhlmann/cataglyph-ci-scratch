@@ -21,37 +21,44 @@ jobs:
               shell: pwsh
               working-directory: dal
               run: Tools/windows/vendor-litert.ps1
-            - name: Build EyeNode (static stdlib)
-              id: static
-              continue-on-error: true
+            # Eye needs no ONNX Runtime: only Voz uses it, and Inference's OnnxSession.swift is
+            # behind #if canImport(COnnxRuntime). Without the edge EyeNode.dll links no onnxruntime.
+            - name: Drop ONNX Runtime from Inference
+              shell: bash
+              working-directory: dal
+              run: |
+                  grep -q '] + jsWasi + jsEventLoop + onnxProducts' Package.swift
+                  sed -i 's/\] + jsWasi + jsEventLoop + onnxProducts/] + jsWasi + jsEventLoop/' Package.swift
+            - name: Build EyeNode
               shell: pwsh
               working-directory: dal
               run: |
-                  swift build --scratch-path ../b-static -c release --product EyeNode -Xswiftc -static-stdlib -Xlinker /LIBPATH:Vendor/litert/lib/windows-x64
+                  swift build --scratch-path ../b -c release --product EyeNode -Xlinker /LIBPATH:Vendor/litert/lib/windows-x64
                   if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            - name: Build EyeNode (dynamic)
-              if: steps.static.outcome != 'success'
-              shell: pwsh
-              working-directory: dal
-              run: |
-                  swift build --scratch-path ../b-static -c release --product EyeNode -Xlinker /LIBPATH:Vendor/litert/lib/windows-x64
-                  if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            - name: Inspect
+            - name: Collect DLLs
               shell: pwsh
               run: |
-                  Get-ChildItem -Recurse b-static -Filter EyeNode.dll | ForEach-Object { $_.FullName; $_.Length }
-                  $dll = (Get-ChildItem -Recurse b-static -Filter EyeNode.dll | Select-Object -First 1).FullName
-                  dumpbin /dependents $dll
-                  where.exe swiftCore.dll Foundation.dll FoundationEssentials.dll 2>$null
+                  $dll = (Get-ChildItem -Recurse b -Filter EyeNode.dll | Select-Object -First 1).FullName
+                  "built: $dll"
                   New-Item -ItemType Directory -Force native | Out-Null
                   Copy-Item $dll native/
                   Copy-Item dal/Vendor/litert/lib/windows-x64/libLiteRt.dll native/
-                  # Ship whatever non-system DLLs the core imports from the Swift runtime.
-                  foreach ($dep in (dumpbin /dependents $dll | Select-String '^\s+(\S+\.dll)$' | ForEach-Object { $_.Matches[0].Groups[1].Value })) {
-                      $hit = where.exe $dep 2>$null | Select-Object -First 1
-                      if ($hit -and $hit -notmatch 'Windows\\System32' -and $hit -notmatch 'native\\') { Copy-Item $hit native/; "runtime: $hit" }
+                  # Transitive closure of non-system imports, found on PATH (the Swift runtime).
+                  $queue = [System.Collections.Queue]::new(); $queue.Enqueue("native/EyeNode.dll"); $queue.Enqueue("native/libLiteRt.dll")
+                  $seen = @{}
+                  while ($queue.Count) {
+                      $f = $queue.Dequeue()
+                      foreach ($dep in (dumpbin /dependents $f | Select-String '^\s+(\S+\.dll)$' | ForEach-Object { $_.Matches[0].Groups[1].Value })) {
+                          $key = $dep.ToLower(); if ($seen[$key]) { continue }; $seen[$key] = $true
+                          if (Test-Path "native/$dep") { $queue.Enqueue("native/$dep"); continue }
+                          $hit = where.exe $dep 2>$null | Select-Object -First 1
+                          if (-not $hit) { "unresolved: $dep"; continue }
+                          if ($hit -match '\\Windows\\') { "system: $dep"; continue }
+                          "bundle: $dep <- $hit"
+                          Copy-Item $hit native/; $queue.Enqueue("native/$dep")
+                      }
                   }
-                  Get-ChildItem native
+                  Get-ChildItem native | Format-Table Name, Length
             - uses: actions/upload-artifact@v7
               with:
                   name: eye-native-win32-x64

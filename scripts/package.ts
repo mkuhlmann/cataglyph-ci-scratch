@@ -1,7 +1,7 @@
 // Packages the app for the host platform: `bun run scripts/package.ts` (`hutch run package`).
 //
-//   Linux   artifacts/Cataglyph-<version>-x86_64.AppImage
-//   macOS   artifacts/Cataglyph-<version>-arm64.zip (+ .dmg when hdiutil exists)
+//   Linux   artifacts/Cataglyph-<version>-linux-x86_64.AppImage
+//   macOS   artifacts/Cataglyph-<version>-macos-arm64.zip (+ .dmg when hdiutil exists)
 //
 // Packaging always runs on the target OS: macOS needs codesign/hdiutil/ditto anyway, and the
 // native packages (Eye's LiteRT core, koffi) are pruned to the host's platform. Windows is out
@@ -202,7 +202,7 @@ async function packageLinux() {
         "-comp", "zstd", "-Xcompression-level", "19", "-b", "1M",
     ]);
     await mkdir(ARTIFACTS, { recursive: true });
-    const out = join(ARTIFACTS, `Cataglyph-${pkg.version}-x86_64.AppImage`);
+    const out = join(ARTIFACTS, `Cataglyph-${pkg.version}-linux-x86_64.AppImage`);
     // Streamed piece by piece: Bun.write of a Blob made of two Bun.file()s writes 0 bytes.
     const writer = Bun.file(out).writer();
     for (const part of [runtime, squash]) {
@@ -300,7 +300,7 @@ async function packageMac() {
     await mkdir(ARTIFACTS, { recursive: true });
     // ditto keeps the symlinks and extended attributes inside the bundle; a plain zip flattens
     // the Electron Framework's symlinks and the app no longer starts.
-    const zip = join(ARTIFACTS, `Cataglyph-${pkg.version}-arm64.zip`);
+    const zip = join(ARTIFACTS, `Cataglyph-${pkg.version}-macos-arm64.zip`);
     await rm(zip, { force: true });
     await run(["ditto", "-c", "-k", "--keepParent", appPath, zip]);
     const outputs = [zip];
@@ -311,7 +311,7 @@ async function packageMac() {
         await mkdir(dmgDir, { recursive: true });
         await run(["ditto", appPath, join(dmgDir, "Cataglyph.app")]);
         await symlink("/Applications", join(dmgDir, "Applications"));
-        const dmg = join(ARTIFACTS, `Cataglyph-${pkg.version}-arm64.dmg`);
+        const dmg = join(ARTIFACTS, `Cataglyph-${pkg.version}-macos-arm64.dmg`);
         await run(["hdiutil", "create", "-volname", "Cataglyph", "-srcfolder", dmgDir, "-ov", "-format", "UDZO", dmg]);
         outputs.push(dmg);
     }

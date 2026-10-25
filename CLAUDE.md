@@ -2,8 +2,8 @@
 
 Desktop app (Electron 44, Vue 3.6 Vapor view, the Bun backend as a sidecar process) to cull a
 folder of new photos: gallery → Eye classification (on-device, GPU) → delete flagged items
-(trash) → archive keepers as JPEG XL. Personal tool for Linux/KDE; macOS (Apple silicon) is a
-base that has not been run yet (`docs/macos.md`).
+(trash) → archive keepers as JPEG XL. Personal tool for Linux/KDE; macOS (Apple silicon) is
+built and smoke-tested in CI only, not yet used on a real Mac (`docs/macos.md`).
 
 ## Layout
 
@@ -21,7 +21,8 @@ base that has not been run yet (`docs/macos.md`).
 - `src/view/` — Vue 3.6 Vapor UI.
 - `scripts/build.ts` (→ `build/app`), `dev.ts`, `package.ts` (AppImage on Linux, zip/dmg on
   macOS), `fetch-vendor.ts` — downloads + checksum-verifies cjxl 0.12, the LiteRT WebGPU
-  accelerator, the Eye weights and the AppImage runtime into `vendor/` and `models/`.
+  accelerator, the Eye weights and the AppImage runtime into `vendor/` and `models/` (on macOS
+  it builds a static cjxl/djxl from pinned libjxl sources instead; needs cmake).
 
 ## Architecture
 
@@ -44,12 +45,13 @@ bun run package                 # AppImage (Linux) / zip + dmg (macOS) into arti
 ```
 
 `hutch run package` is the same (alias `hutch run appimage`). Output:
-`artifacts/Cataglyph-<version>-x86_64.AppImage` on Linux, `Cataglyph-<version>-arm64.zip` (+ `.dmg`)
+`artifacts/Cataglyph-<version>-linux-x86_64.AppImage` on Linux, `Cataglyph-<version>-macos-arm64.zip` (+ `.dmg`)
 on macOS. Hutch needs `~/.hutch/bin` on PATH.
 
 Releases are automated (`.github/workflows/release.yml`): release-please keeps a release PR
 open that bumps `package.json` and writes `CHANGELOG.md` from the commit types; merging it tags
-`vX.Y.Z`, and CI attaches the AppImage + `.sha256` to the GitHub release. Never bump the version
+`vX.Y.Z`, and CI (a Linux and a `macos-15` job) attaches the AppImage and the unsigned arm64
+zip + dmg, each with a `.sha256`, to the GitHub release. Never bump the version
 by hand. The workflow pins Bun 1.4.4 (it ships as `bin/bun`): keep it in step with local Bun.
 
 ## Conventions

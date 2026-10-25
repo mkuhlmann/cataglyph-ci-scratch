@@ -16,7 +16,8 @@ for (let n = 0; n < 4; n++) {
     await Bun.write(join(dir, `IMG_000${n}.jpg`), jpeg.encode({ data, width, height }, 90).data);
 }
 
-const proc = Bun.spawn([join(app, "Contents/MacOS/Cataglyph"), "--remote-debugging-port=9222"], { stdout: "inherit", stderr: "inherit" });
+const executable = app.endsWith(".app") ? join(app, "Contents/MacOS/Cataglyph") : app;
+const proc = Bun.spawn([executable, "--remote-debugging-port=9222"], { stdout: "inherit", stderr: "inherit" });
 let target: { type: string; webSocketDebuggerUrl: string } | undefined;
 for (let i = 0; i < 60 && !target; i++) {
     await Bun.sleep(1000);
@@ -62,6 +63,6 @@ for (let i = 0; i < 90; i++) {
 }
 await Bun.sleep(2000);
 await Bun.write("smoke-gallery.png", Buffer.from((await cdp("Page.captureScreenshot")).result.data, "base64"));
-console.log(Bun.spawnSync(["ps", "-ax", "-o", "pid,ppid,command"]).stdout.toString().split("\n").filter(l => /Cataglyph|bun/.test(l)).join("\n"));
+console.log(Bun.spawnSync(process.platform === "win32" ? ["tasklist"] : ["ps", "-ax", "-o", "pid,ppid,command"]).stdout.toString().split("\n").filter(l => /Cataglyph|bun/i.test(l)).join("\n"));
 proc.kill();
 if (!total || done < total) process.exit(1);

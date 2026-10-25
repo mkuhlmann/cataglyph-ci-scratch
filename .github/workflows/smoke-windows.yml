@@ -1,0 +1,37 @@
+# Scratch repo only: start the packaged Windows app from a Release run's artifact.
+name: Smoke Windows
+on:
+    workflow_dispatch:
+        inputs:
+            run_id:
+                description: "Release run id with the Cataglyph-windows artifact"
+                required: true
+permissions:
+    contents: read
+    actions: read
+jobs:
+    smoke:
+        runs-on: windows-2025
+        steps:
+            - uses: actions/checkout@v7
+            - uses: oven-sh/setup-bun@v2
+              with:
+                  bun-version: 1.4.4
+            - run: bun install --frozen-lockfile
+            - uses: actions/download-artifact@v8
+              with:
+                  name: Cataglyph-windows
+                  run-id: ${{ inputs.run_id }}
+                  github-token: ${{ github.token }}
+                  path: dl
+            - shell: pwsh
+              run: |
+                  Expand-Archive (Get-ChildItem dl/*.zip | Select-Object -First 1).FullName -DestinationPath app
+                  Get-ChildItem app/Cataglyph | Select-Object -First 20
+            - shell: bash
+              run: bun .github/smoke/smoke-mac.ts "$PWD/app/Cataglyph/Cataglyph.exe"
+            - if: always()
+              uses: actions/upload-artifact@v7
+              with:
+                  name: smoke-screens-windows
+                  path: "*.png"
